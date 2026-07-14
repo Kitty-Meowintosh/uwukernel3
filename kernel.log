@@ -1,0 +1,123 @@
+[INFO] === UwUKernel3 syscall suite starting ===
+[INFO] [PASS] proc.info(nil) describes the calling process
+[INFO] [PASS] proc.info(pid) explicit self-pid matches proc.info(nil)
+[INFO] [PASS] proc.info(invalid pid) -> ESRCH
+[INFO] [PASS] proc.list contains our own pid and the kernel process (pid 0)
+[INFO] [PASS] proc.spawn requires attr.blob -> clean EINVAL
+[INFO] [PASS] proc.spawn(path, args, nil) with attributes entirely omitted -> clean EINVAL, not a crash
+[INFO] [PASS] [GAP] proc.spawn(path, args, <bad type>) should be validated cleanly, not crash on a raw index (api/proc.lua's attribute assert is a copy-paste bug: it checks `args` twice, never `attributes`; a string happens to survive via string's __index metatable, but a number/boolean does not)
+[INFO] [PASS] proc.spawn + proc.wait round-trips a normal exit code
+[INFO] [PASS] proc.spawn passes args through to the child's `arg` global
+[INFO] [PASS] proc.spawn attr.fds SHARE inherits a send-capable copy of a port
+[INFO] [PASS] proc.wait(-1) waits for any child and reaps in completion order
+[INFO] [PASS] proc.wait for a pid that is not our child -> ECHILD
+[INFO] [PASS] proc.wait with zero children -> ECHILD
+[INFO] [PASS] proc.kill with SIGKILL(9) force-exits the child with code 137
+[INFO] [PASS] proc.kill with SIGTERM(15) and no handler -> default terminate, code 143
+[INFO] [PASS] proc.kill with an unrecognised signal id and no handler -> EINVAL
+[INFO] [PASS] (nested) sibling kill EPERM
+[INFO] [PASS] proc.kill: a non-root, non-parent process cannot signal a sibling -> EPERM
+[INFO] [PASS] proc.setattr: non-root cannot change uid/gid/groups (EPERM), but can change cwd
+[INFO] [PASS] proc.setattr: root can change uid/gid/groups
+[INFO] [PASS] proc.limit: invalid resource name -> EINVAL
+[INFO] [PASS] proc.limit: negative value -> EINVAL
+[INFO] [PASS] proc.limit: root can raise a limit above the current value
+[INFO] [PASS] proc.limit: non-root can lower a limit but not raise it
+[INFO] [PASS] [GAP] thread.create should enforce proc.limit('maxThreads', N) per SYSCALLME.md, but doesn't
+[INFO] [PASS] removed proc.yield(7) -> ENOSYS
+[INFO] [PASS] thread.id() returns a number identifying the calling thread
+[INFO] [PASS] thread.create/join round-trips a return value
+[INFO] [PASS] thread.join on an unknown tid -> ESRCH
+[INFO] [PASS] thread.join(self) -> EDEADLK
+[INFO] [PASS] thread.list includes a newly created thread until it's joined/reaped
+[INFO] [PASS] [GAP] task.join should report success=false on a crashed thread; instead the crash force-exits the whole owning process (dead path: ThreadManager.terminate is never reached from Scheduler.run's crash branch)
+[INFO] [PASS] ipc.create returns a usable fd; ipc.stat reports an empty queue
+[INFO] [PASS] ipc.send/receive round-trips a payload and its declared type
+[INFO] [PASS] ipc.send deep-copies the payload (sender mutation after send is not observed)
+[INFO] [PASS] ipc.send with reply_port lets the receiver reply back to the sender
+[INFO] [PASS] ipc.send with transfer moves a handle to the receiver and closes the sender's copy
+[INFO] [PASS] ipc.close on an invalid fd errors
+[INFO] [PASS] ipc.receive on an invalid fd -> EBADF
+[INFO] [PASS] ipc.send on an invalid fd -> EBADF
+[INFO] [PASS] io.dup'd send-right of a port cannot be used to receive -> EPERM
+[INFO] [PASS] ipc.poll: only a receive-right fd may be polled -> EPERM for a send-right
+[INFO] [PASS] ipc.poll wakes up reporting whichever of several ports received a message
+[INFO] [PASS] ipc.poll returns immediately if a queued message already exists
+[INFO] [PASS] [GAP] ipc.receive(port, opts) ignores opts.types and opts.timeout entirely
+[INFO] [PASS] removed ipc.transfer(35) -> ENOSYS
+[INFO] [PASS] io.dup duplicates a fd to a fresh number
+[INFO] [PASS] io.dup(fd, targetFd) closes whatever previously lived at targetFd
+[INFO] [PASS] io.dup(fd, fd) is a no-op that returns the same fd
+[INFO] [PASS] io.dup on an invalid fd -> EBADF
+[INFO] [PASS] unimplemented io.pipe(73) -> ENOSYS
+[INFO] [PASS] fs test harness: mount an in-process mock VFS driver
+[INFO] [PASS] fs.open on an unmounted path -> ENOTFOUND
+[INFO] [PASS] (nested) fs.mount EPERM
+[INFO] [PASS] fs.mount: non-root cannot mount -> EPERM
+[INFO] [PASS] fs.mount: mounting the same path twice -> EBUSY
+[INFO] [PASS] fs.mount: invalid port fd -> EBADF
+[INFO] [PASS] fs.open/read/write/seek/close round-trip through the mock driver
+[INFO] [PASS] fs.write creates/extends a file and fs.read reflects the new contents
+[INFO] [PASS] fs.stat reports size/isDir for a known file and directory
+[INFO] [PASS] fs.stat on a missing path propagates the driver's error message
+[INFO] [PASS] fs.list enumerates entries directly under a path
+[INFO] [PASS] fs.mkdir/fs.list/fs.remove round-trip a directory
+[INFO] [PASS] fs.rename moves a file (both sides resolved relative to the mount)
+[INFO] [PASS] fs.rename across two different mounts -> EXDEV
+[INFO] [PASS] fs.copy duplicates a file, leaving the original intact
+[INFO] [PASS] fs.copy's `destination` is relativized to the mount, same as fs.rename
+[INFO] [PASS] fs.copy across two different mounts -> EXDEV
+[INFO] [PASS] fs.ioctl passes commands and arguments through to the driver
+[INFO] [PASS] fs.ioctl with an unknown command propagates the driver's error
+[INFO] [PASS] fs.setaddr round-trips through the driver without error
+[INFO] [PASS] fs.flush on an open file does not error
+[INFO] [PASS] fs.read/write/seek/close/ioctl on an invalid fd -> EBADF
+[INFO] [PASS] fs.seek with an invalid whence string -> EINVAL
+[INFO] [PASS] fs.seek('end', N) round-trips through a driver STAT call
+[INFO] [PASS] (nested) fs.unmount EPERM
+[INFO] [PASS] fs.unmount: non-root, non-owner cannot unmount -> EPERM
+[INFO] [PASS] fs.unmount on a non-mount-point path -> EINVAL
+[INFO] [PASS] fs.unmount by the owning root process succeeds, and the path is unresolvable afterwards
+[INFO] [PASS] sys.epoch('utc') returns a number
+[INFO] [PASS] [GAP] sys.epoch() with no locale should default to 'ingame' per SYSCALLME.md, but currently EINVALs
+[WARN] [FAIL] [GAP] sys.epoch(locale) should reject unrecognised locales per SYSCALLME.md, but accepts anything: @test.lua:87 expected an error, call succeeded
+[INFO] [PASS] sys.timer fires through the scheduler and delivers a TIMER message with the cookie
+[INFO] [PASS] sys.timer rejects a negative duration -> EINVAL
+[INFO] [PASS] sys.cancel prevents a timer from firing
+[INFO] [PASS] sys.info reports uptime and version fields
+[INFO] [PASS] sys.bind_event: binding the same event twice -> error
+[INFO] [PASS] (nested) bind_event EPERM
+[INFO] [PASS] sys.bind_event/unbind_event require root per SYSCALLME.md
+[WARN] [FAIL] [GAP] sys.unbind_event on an event that was never bound should error per docs, but silently no-ops: @test.lua:87 expected an error, call succeeded
+[INFO] [PASS] (nested) unbind_event by non-owner
+[INFO] [PASS] sys.unbind_event by a non-owner (different root process) -> EPERM
+[INFO] [PASS] (nested) shutdown EPERM
+[INFO] [PASS] (nested) reboot EPERM
+[INFO] [PASS] sys.shutdown/reboot: non-root cannot invoke them (EPERM, checked before the real HAL call)
+[INFO] [PASS] sys.signal: routes a signal to a registered port instead of taking default action
+[INFO] [PASS] sys.signal: unregistering restores the default action (SIGINT terminates, code 130)
+[INFO] [PASS] sys.signal with a fd that is not a receive right -> EPERM
+[INFO] [PASS] dev.list returns a table
+[INFO] [PASS] dev.open on an unknown device -> ENOENT
+[INFO] [PASS] dev.call on an invalid fd -> EBADF
+[INFO] [PASS] dev.call on a non-device fd -> EBADF
+[INFO] [PASS] dev.type/dev.methods on an unknown device name return nil rather than erroring
+[INFO] [PASS] (nested) dev.list EPERM
+[INFO] [PASS] dev.list/dev.type/dev.methods require root per SYSCALLME.md
+[INFO] [PASS] dev.open/call/type/methods against a real attached peripheral, if one is present
+[INFO] [PASS] sync.create rejects an unknown primitive type -> EINVAL
+[INFO] [PASS] [GAP] sync.create('SEM') is documented as supported but is a deliberate ENOSYS stub
+[INFO] [PASS] sync.create/lock/unlock basic mutex round-trip (default init = unlocked)
+[INFO] [PASS] sync.create('MUTEX', 0) creates it already locked, owned by the creating thread
+[INFO] [PASS] sync.lock(handle, 0) is a non-blocking tryLock that returns false when busy
+[INFO] [PASS] sync.unlock by a non-owner -> EPERM
+[INFO] [PASS] sync.lock/unlock/notify on an invalid handle -> EBADF
+[INFO] [PASS] sync.lock/notify on a handle of the wrong sync type -> EINVAL
+[INFO] [PASS] sync.wait: caller must currently hold the mutex (releasing/unlock check fails otherwise)
+[INFO] [PASS] sync.wait/notify: a single waiter is woken and reacquires the mutex
+[INFO] [PASS] sync.notify(cond, false) wakes exactly one of several waiters; notify(cond, true) wakes the rest
+[INFO] [PASS] [GAP] sync.lock(handle, timeout>0) should fail after `timeout` seconds per SYSCALLME.md, but any non-zero timeout is treated as an infinite wait
+[INFO] [PASS] [GAP] sync.wait(cond, mutex, timeout>0) should fail after `timeout` seconds per SYSCALLME.md, but the timeout argument is dropped entirely (ConditionVariable:wait never receives it)
+[INFO] [PASS] an unregistered syscall id -> ENOSYS
+[INFO] [PASS] fs.manage(71), documented as reserved but never implemented -> ENOSYS
+[WARN] === RESULTS: 119 passed, 2 failed (2 expected [GAP] failures, 0 unexpected) ===

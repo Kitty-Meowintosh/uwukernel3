@@ -512,6 +512,62 @@ test("ipc.send on an invalid fd -> EBADF", function()
     expectError(function() call(SYS.ipc_send, 999999, {}) end, "EBADF");
 end)
 
+-- Spawns a child holding a send right to a doomed port on fd 3, parked on fd 4 until we
+-- say go. proc.spawn queues the child ahead of the parent's own resume, so without the
+-- gate it would send while the port is still alive and owned.
+local function spawnGatedSender(src)
+    local victim = call(SYS.ipc_create);
+    local gate = call(SYS.ipc_create);
+    local gateSend = call(SYS.io_dup, gate);
+
+    local pid = spawnChild(body({
+        CREATE = SYS.ipc_create, SEND = SYS.ipc_send,
+        RECEIVE = SYS.ipc_receive, SIGNAL = SYS.sys_signal,
+    }, "call(RECEIVE, 4)\n" .. src), {
+        fds = { [3] = victim, [4] = { fd = gate, op = "MOVE" } },
+    });
+
+    call(SYS.ipc_close, victim);
+    call(SYS.ipc_send, gateSend, { go = true });
+    call(SYS.ipc_close, gateSend);
+
+    return pid;
+end
+
+test("SIGPIPE is not raised when the owner releases its receive right", function()
+    local pid = spawnGatedSender("");
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "holder of a send right was killed by the owner leaving (exit " .. tostring(r.code) .. ")");
+end)
+
+test("SIGPIPE is raised on a send to a port with no receiver, terminating by default", function()
+    local pid = spawnGatedSender([[
+        call(SEND, 3, { hi = "nobody home" })
+    ]]);
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 141, "expected exit 141 (128 + SIGPIPE), got " .. tostring(r.code));
+end)
+
+test("a registered SIGPIPE handler turns the broken send into EPIPE instead of death", function()
+    local pid = spawnGatedSender([[
+        local sigPort = call(CREATE)
+        call(SIGNAL, 13, sigPort)
+
+        local ok, err = pcall(call, SEND, 3, { hi = "nobody home" })
+        assert(not ok, "expected the send to fail")
+        assert(tostring(err):find("EPIPE"), "expected EPIPE, got: " .. tostring(err))
+
+        local msg = call(RECEIVE, sigPort)
+        assert(msg.type == "SIGNAL", "expected a SIGNAL message, got " .. tostring(msg.type))
+        assert(msg.data.signal == 13, "expected signal 13, got " .. tostring(msg.data.signal))
+        assert(msg.data.data.fd == 3, "expected named fd in payload, got " .. tostring(msg.data.data.fd))
+    ]]);
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "child exited " .. tostring(r.code) .. " instead of handling SIGPIPE");
+end)
+
 test("io.dup'd send-right of a port cannot be used to receive -> EPERM", function()
     local port = call(SYS.ipc_create);
     local sendFd = call(SYS.io_dup, port);
@@ -1154,6 +1210,40 @@ test("dev.open/call/type/methods against a real attached peripheral, if one is p
         local list = call(SYS.dev_call, fd, "list", "/");
         assert(type(list) == "table", "drive list did not return a table");
     end
+
+    call(SYS.fs_close, fd);
+end)
+
+test("fs.close releases a device handle and unclaims the device", function()
+    local found;
+    for _, name in ipairs(call(SYS.dev_list)) do
+        if name == "screen" or name:match("^drive") then found = name; break; end
+    end
+
+    if not found then
+        log("  (no screen/drive device registered -- skipping device release test)");
+        return;
+    end
+
+    local fd = call(SYS.dev_open, found);
+
+    -- A second claimant is refused while we hold it...
+    local pid = spawnChild(body({ DEVOPEN = SYS.dev_open }, [[
+        local ok, err = pcall(call, DEVOPEN, "]] .. found .. [[")
+        assert(not ok and tostring(err):find("EBUSY"), "expected EBUSY, got: " .. tostring(err))
+    ]]));
+    assert(call(SYS.proc_wait, pid).code == 0, "device was claimable while still held");
+
+    call(SYS.fs_close, fd);
+
+    -- ...the handle is gone...
+    expectError(function() call(SYS.dev_call, fd, "getSize") end, "EBADF");
+
+    -- ...and the claim went with it.
+    pid = spawnChild(body({ DEVOPEN = SYS.dev_open }, [[
+        call(DEVOPEN, "]] .. found .. [[")
+    ]]));
+    assert(call(SYS.proc_wait, pid).code == 0, "device stayed claimed after its handle was closed");
 end)
 
 --============================================================--

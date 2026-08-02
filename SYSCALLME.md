@@ -7,6 +7,12 @@ When I started this project, I decided to start by writing every syscall api and
 
 Its a very rough file.
 
+> [!IMPORTANT]
+> This file is the original design intent and has drifted from the kernel in ~20 places.
+> For what the kernel actually does, see `syscalls.html` (searchable, every entry
+> verified against `src/`) or `DIVERGENCES.md` (the drift list, split into
+> fix-the-code and fix-the-doc).
+
 ### Process & Task Management
 ---
 `0` | `proc.spawn(path: string, args: string[]?, attributes: table?) -> pid: number`
@@ -753,7 +759,7 @@ Default signals and their behaviour:
 | 1   | SIGHUP  | Sent when device (peripheral) is disconnected. | Terminate         | device_name |
 | 2   | SIGINT  | Sent to cancel current action                  | Terminate         |             |
 | 17  | SIGCHLD | Sent when child dies                           | None              | pid, status |
-| 13  | SIGPIPE | Sent when pipe or port disconnects             | Terminate         | fd          |
+| 13  | SIGPIPE | Sent when writing to a port with no receiver   | Terminate         | fd          |
 | 19  | SIGSTOP | Stops process temporary (to be added later)    | Unstoppable force |             |
 | 18  | SIGCONT | Continues process (to be added later)          | Unstoppable force |             |
 | 9   | SIGKILL | Kills process immediately and ruthlessly       | Unstoppable force |             |

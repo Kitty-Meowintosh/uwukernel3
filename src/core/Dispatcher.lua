@@ -34,13 +34,13 @@ function Dispatcher.dispatch(tcb, syscallId, syscallArguments)
     local results = table.pack(pcall(syscalls[syscallId], tcb, table.unpack(syscallArguments, 1, syscallArguments.n)));
     local success = table.remove(results, 1);
 
+    if (tcb.state == "DEAD" or tcb.state == "ZOMBIE") then
+        return { status = "DROP" };
+    end
+
     -- return if errored;
     if (not success) then
         return { status = "ERROR", error = results[1] };
-    end
-
-    if (tcb.state == "DEAD" or tcb.state == "ZOMBIE") then
-        return { status = "DROP" };
     end
 
     -- return if block

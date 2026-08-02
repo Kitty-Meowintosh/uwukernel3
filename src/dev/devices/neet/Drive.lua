@@ -10,7 +10,7 @@ DriveDevice.__index = DriveDevice;
 local METHODS = {
     "getPartitions", "getPartition", "createPartition", "deletePartition",
     "setPartitionHidden", "setPartitionReadOnly", "makeDir", "list",
-    "read", "write",
+    "read", "write", "exists", "isFile", "isDir", "delete", "size",
 };
 
 function DriveDevice.new(disk)
@@ -44,6 +44,13 @@ function DriveDevice:write(path, offset, data, mode)
     return #data;
 end
 
+function DriveDevice:size(path)
+    local handle = HAL.files.open(path, "rb", self.disk);
+    local size = handle.seek("end");
+    handle.close();
+    return size;
+end
+
 function DriveDevice:ioctl(pcb, method, ...)
     if not self.methods[method] then
         error("EINVAL: Unknown drive method: " .. tostring(method));
@@ -62,6 +69,11 @@ function DriveDevice:ioctl(pcb, method, ...)
     if method == "list" then
         local path = ...;
         return HAL.files.getChildren(path, self.disk);
+    end
+
+    if method == "size" then
+        local path = ...;
+        return self:size(path);
     end
 
     -- partition management: every files.* function here takes disk last.

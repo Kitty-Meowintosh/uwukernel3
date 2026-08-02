@@ -61,7 +61,9 @@ end
 ---@param level string Log severity ("INFO", "WARN", "ERROR").
 ---@param msg string Message content.
 function sys.log(tcb, level, msg)
-    local line = "[" .. tostring(level) .. "] " .. tostring(msg);
+    local pcb = ProcessRegistry.get(tcb.pid);
+    local proc_prefix = pcb.name .. "(" .. pcb.pid .. ":" .. tcb.tid .. ")";
+    local line = proc_prefix .. " [" .. tostring(level) .. "] " .. tostring(msg);
     HAL.appendLog(line);
 
     if level == "WARN" or level == "ERROR" then

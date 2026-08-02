@@ -26,6 +26,19 @@ local function notifyPollers(port)
     port.pollers = remainingPollers;
 end
 
+local function raiseBrokenPipe(pcb, fd)
+    local SignalManager = require("proc.SignalManager");
+    local Signal = require("proc.classes.Signal");
+
+    pcall(SignalManager.send, ProcessRegistry.get(0), pcb.pid, Signal.SIGPIPE, { fd = fd });
+
+    if (pcb.state == "ZOMBIE") then
+        return;
+    end
+
+    error("EPIPE: Attempt to write to port with no receiver.");
+end
+
 -- Removes pid from port.temporarySenders if present, returning whether it was found.
 local function consumeTemporarySender(port, pid)
     for i, v in pairs(port.temporarySenders) do
@@ -139,13 +152,15 @@ function IPCManager.send(pcb, fd, payload, opts)
     end
 
     local portObj = ObjectManager.get(portId);
-    if (not portObj) then error("EINTERNAL: Right points to invalid port") end
+    if (not portObj) then
+        return raiseBrokenPipe(pcb, fd);
+    end
 
     --- @type Port
     local port = portObj.impl;
     local recipient = ProcessRegistry.get(port.ownerPid);
     if (not recipient) then
-        error("EPIPE: Attempt to write to port with no recipient.");
+        return raiseBrokenPipe(pcb, fd);
     end
 
     if (#port.receivers == 0 and #port.queue >= port.capacity and not (port.isKernelCallback and port.callback)) then

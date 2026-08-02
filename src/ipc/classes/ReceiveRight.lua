@@ -39,29 +39,6 @@ function ReceiveRight:onRelease(by)
         end;
 
         port.ownerPid = nil;
-
-        -- SIGPIPE
-        local ProcessRegistry = require("proc.registry.ProcessRegistry");
-        local SignalManager = require("proc.SignalManager");
-        local kernelProcess = ProcessRegistry.get(0);
-
-        for _, senderPid in ipairs(port.senders) do
-            local senderPcb = ProcessRegistry.get(senderPid);
-            if senderPcb then
-                local fd;
-                 for lFd, gId in pairs(senderPcb.handles) do
-                    local obj = ObjectManager.get(gId);
-                    if obj and obj.type == "SEND_RIGHT" and obj.impl.portId == self.portId then
-                        fd = lFd;
-                        break;
-                    end
-                end
-
-                if fd then
-                    pcall(SignalManager.send, kernelProcess, senderPid, 13, { fd });
-                end
-            end
-        end
     end
 end
 

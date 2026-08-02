@@ -66,9 +66,12 @@ function VFSManager.close(pcb, fd)
     --- @type FileDescriptor
     local file = kobj.impl; -- psst, this is not file anymore lol
     if (file.close) then
-        return file:close(pcb);
+        local result = file:close(pcb);
+        ObjectManager.close(pcb, fd);
+        return result;
     end
 
+    ObjectManager.close(pcb, fd);
     return { status = "OK", val = {} };
 end
 

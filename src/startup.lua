@@ -1,48 +1,26 @@
--- if require then
---     local lastPoint = chip.getUnixTime();
---     local toggled = false;
---     while true do
---         if chip.getUnixTime() - lastPoint > 1 then
---             if toggled then
---                 headsup.clear();
---                 headsup.draw();
---                 toggled = false;
---             else 
---                 headsup.drawPixel(1, 1);
---                 headsup.draw();
---                 toggled = true;
---             end
+local KERNEL_DIR_CC   = "/Core/kernel";
+local KERNEL_DIR_NEET = "0:system:/Core/kernel";
 
---             lastPoint = chip.getUnixTime();
---         end
+local function detectBackend()
+    if _G.chip and chip.version then
+        return "neet";
+    end
 
---         coroutine.yield();
---     end
--- else
---     chip.crash("nope!");
--- end
+    if _G.os and os.version and os.version():find("CraftOS") then
+        return "cc";
+    end
 
-local HAL = require("hal");
-local DeviceManager = require("dev.DeviceManager");
-local ProcessManager = require("proc.ProcessManager");
-local Scheduler = require("core.Scheduler");
-
-HAL.clear();
-HAL.print("Booting UwUKernel3...");
-
-DeviceManager.onStartup();
-
-local blob;
-if HAL.backend == "cc" then
-    local handle = fs.open("test.lua", "r");
-    blob = handle.readAll();
-    handle.close();
-elseif HAL.backend == "neet" then
-    local handle = HAL.files.open("system:/test.lua", "r", 0);
-    blob = handle.read("a");
-    handle.close();
+    error("boot: unable to detect a supported platform");
 end
 
-ProcessManager.spawn(0, "test.lua", {}, { blob = blob });
-Scheduler.run();
+local kernelDir = detectBackend() == "neet" and KERNEL_DIR_NEET or KERNEL_DIR_CC;
+local parentDir = kernelDir:gsub("/[^/]+$", "");
 
+package.path = table.concat({
+    package.path,
+    kernelDir .. "/?.lua",
+    kernelDir .. "/?/init.lua",
+    parentDir .. "/?/init.lua",
+}, ";");
+
+require("kernel").run();

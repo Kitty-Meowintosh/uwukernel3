@@ -5,9 +5,14 @@ description = "UwUKernel3 — Lua microkernel for CraftOS-PC and NEET"
 provides    = ["startup.lua"]
 
 [[install]]
+from = "src/startup.lua"
+to   = "system/startup.lua"
+
+[[install]]
 from = "src/"
-to   = "system/"
+to   = "system/Core/kernel/"
 exclude = [
+    "startup.lua",
     "**/*.md",
     "kernel.log",
 ]

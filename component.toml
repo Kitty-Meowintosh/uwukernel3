@@ -1,0 +1,13 @@
+[component]
+name        = "kernel"
+kind        = "kernel"
+description = "UwUKernel3 — Lua microkernel for CraftOS-PC and NEET"
+provides    = ["startup.lua"]
+
+[[install]]
+from = "src/"
+to   = "system/"
+exclude = [
+    "**/*.md",
+    "kernel.log",
+]

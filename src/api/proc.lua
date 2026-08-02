@@ -88,6 +88,7 @@ function proc.setattr(tcb, attr)
             error("EPERM: No permission.");
         end
 
+        process.euid = attr.uid;
         process.uid = attr.uid;
     end
 
@@ -96,6 +97,7 @@ function proc.setattr(tcb, attr)
             error("EPERM: No permission.");
         end
 
+        process.egid = attr.gid;
         process.gid = attr.gid;
     end
 

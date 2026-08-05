@@ -82,14 +82,13 @@ function ObjectManager.link(pcb, globalId, targetFd)
     if (not kernelObject) then
         error(string.format("Linking invalid global id: %s", globalId)); end
 
-    local fd = 1;
+    local fd = 0;
     if (targetFd) then
         fd = targetFd;
         if (pcb.handles[fd]) then
             ObjectManager.close(pcb, fd);
         end
     else
-        fd = 1;
         if (not pcb.handles or type(pcb.handles) ~= "table") then
             error("Invalid PCB") end;
         while pcb.handles[fd] do fd = fd + 1 end;

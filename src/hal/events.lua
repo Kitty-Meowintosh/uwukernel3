@@ -26,8 +26,8 @@ function events.poll()
             coroutine.yield();
         end
     end
-
-    return table.remove(buffer, 1);
+    local event = table.remove(buffer, 1);
+    return event;
 end
 
 return events;

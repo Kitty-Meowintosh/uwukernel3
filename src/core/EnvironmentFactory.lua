@@ -12,7 +12,7 @@ function EnvironmentFactory.getEnvironment(pid, args)
             preload = {},
             loaded = {},
             -- TODO: Put path here
-            path = "/System/Library/?.lua;/System/Library/?/init.lua",
+            path = "/Library/?.lua;/Library/?/init.lua",
         },
 
         -- calling syscalls
@@ -37,13 +37,13 @@ function EnvironmentFactory.getEnvironment(pid, args)
             local result = table.concat(parts, " ");
             result = result .. "\n";
 
-            local length = env.call(67, 2, result);
-            env.call(82, 2);
+            local length = env.call(67, 1, result);
+            env.call(82, 1);
             return length;
         end,
 
         read = function(number)
-            return env.call(66, 1, number);
+            return env.call(66, 0, number);
         end,
 
         sleep = function(duration)

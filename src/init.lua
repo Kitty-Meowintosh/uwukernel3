@@ -35,8 +35,7 @@ function Kernel.run()
         handle1.close();
     end
 
-    -- ProcessManager.spawn(0, "init.lua", {}, { blob = blob, name = "launchd" });
-    ProcessManager.spawn(0, "test.lua", {}, { blob = testBlob, name = "tests" });
+    ProcessManager.spawn(0, "init.lua", {}, { blob = blob, name = "launchd" });
     Scheduler.run();
 end
 

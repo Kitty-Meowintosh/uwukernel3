@@ -115,8 +115,12 @@ function Scheduler.run()
                     local cleanTrace = rawTrace;
 
                     if HAL.backend == "cc" then term.setTextColor(16384) end -- red
-                    HAL.print("[" .. tid .. "] " .. tostring(trap):gsub("^.-:%d+: ", ""));
+                    local procPrefix = pcb.name .. "(" .. pcb.pid .. ":" .. tcb.tid .. ")";
+                    local totalLog = procPrefix .. " [ERROR] " .. tostring(trap):gsub("^.-:%d+: ", "")
+                    HAL.print(totalLog);
                     HAL.print(cleanTrace);
+                    HAL.appendLog(totalLog);
+                    HAL.appendLog(cleanTrace);
                     if HAL.backend == "cc" then term.setTextColor(1) end
 
                     local ProcessManager = require("proc.ProcessManager");

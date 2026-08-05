@@ -55,4 +55,20 @@ function SignalManager.send(pcb, targetPid, signal, payload)
     end
 end
 
+---Raises SIGPIPE at a process that wrote somewhere nobody is listening any more.
+---Returns only if the default action did not kill it; otherwise the writer is
+---handed EPIPE to deal with itself.
+---@param pcb Process the writer
+---@param fd number|nil descriptor that was written to
+---@param message string|nil what the writer sees, if it survives
+function SignalManager.brokenPipe(pcb, fd, message)
+    pcall(SignalManager.send, ProcessRegistry.get(0), pcb.pid, Signal.SIGPIPE, { fd = fd });
+
+    if (pcb.state == "ZOMBIE") then
+        return;
+    end
+
+    error(message or "EPIPE: Nothing is listening on the other end.");
+end
+
 return SignalManager;

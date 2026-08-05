@@ -120,7 +120,7 @@ function VFSManager.write(pcb, fd, data, offset)
         error("EINVAL: Object does not support writing");
     end
 
-    return file:write(pcb, data, absolute);
+    return file:write(pcb, data, absolute, fd);
 end
 
 ---Flushes a file to a disk.
@@ -176,6 +176,7 @@ function VFSManager.seek(pcb, fd, offset, whence)
     if not globalId then error("EBADF: Invalid file descriptor.") end;
 
     local kObj = ObjectManager.get(globalId);
+    if kObj and kObj.type == "PIPE" then error("ESPIPE: Illegal seek.") end;
     if not kObj or kObj.type ~= "FILE" then error("EBADF: Not a file.") end;
 
     --- @type FileDescriptor

@@ -28,15 +28,8 @@ end
 
 local function raiseBrokenPipe(pcb, fd)
     local SignalManager = require("proc.SignalManager");
-    local Signal = require("proc.classes.Signal");
 
-    pcall(SignalManager.send, ProcessRegistry.get(0), pcb.pid, Signal.SIGPIPE, { fd = fd });
-
-    if (pcb.state == "ZOMBIE") then
-        return;
-    end
-
-    error("EPIPE: Attempt to write to port with no receiver.");
+    SignalManager.brokenPipe(pcb, fd, "EPIPE: Attempt to write to port with no receiver.");
 end
 
 -- Removes pid from port.temporarySenders if present, returning whether it was found.

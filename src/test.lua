@@ -48,7 +48,7 @@ local SYS = {
     fs_setaddr = 77, fs_rename = 78, fs_copy = 79, fs_remove = 80, fs_mkdir = 81,
     fs_flush = 82,
 
-    io_dup = 74,
+    io_pipe = 73, io_dup = 74,
 
     sys_epoch = 96, sys_timer = 97, sys_alarm = 98, sys_cancel = 99,
     sys_log = 100, sys_info = 101, sys_bind_event = 102, sys_unbind_event = 103,
@@ -635,7 +635,7 @@ test("removed ipc.transfer(35) -> ENOSYS", function()
 end)
 
 --============================================================--
--- io.* (74) and unimplemented io.pipe (73)
+-- io.dup (74)
 --============================================================--
 
 test("io.dup duplicates a fd to a fresh number", function()
@@ -671,8 +671,241 @@ test("io.dup on an invalid fd -> EBADF", function()
     expectError(function() call(SYS.io_dup, 999999) end, "EBADF");
 end)
 
-test("unimplemented io.pipe(73) -> ENOSYS", function()
-    expectError(function() call(73) end, "ENOSYS");
+--============================================================--
+-- io.pipe (73)
+--============================================================--
+
+test("io.pipe hands back two distinct descriptors", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    assert(type(readFd) == "number" and type(writeFd) == "number",
+        "expected two fds, got " .. tostring(readFd) .. " and " .. tostring(writeFd));
+    assert(readFd ~= writeFd, "both ends came back as the same fd");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("bytes written to a pipe come back out of its read end", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local written = call(SYS.fs_write, writeFd, "meow");
+    assert(written == 4, "expected 4 bytes written, got " .. tostring(written));
+    assert(call(SYS.fs_read, readFd, 16) == "meow", "the pipe did not return what was written");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("a read takes only what is buffered, across the boundaries of separate writes", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    call(SYS.fs_write, writeFd, "abc");
+    call(SYS.fs_write, writeFd, "def");
+    assert(call(SYS.fs_read, readFd, 4) == "abcd", "a read did not span two buffered writes");
+    assert(call(SYS.fs_read, readFd, 4) == "ef", "the second read did not resume mid-chunk");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("a pipe is half-duplex: each end refuses the other end's operation", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    expectError(function() call(SYS.fs_write, readFd, "x") end, "does not support writing");
+    expectError(function() call(SYS.fs_read, writeFd, 4) end, "does not support reading");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("a pipe carries bytes, so a non-string write -> EINVAL", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    expectError(function() call(SYS.fs_write, writeFd, { not_a = "string" }) end, "EINVAL");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("a pipe has no cursor: seek and positional I/O -> ESPIPE", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    expectError(function() call(SYS.fs_seek, readFd, 0, "set") end, "ESPIPE");
+    expectError(function() call(SYS.fs_read, readFd, 4, 8) end, "ESPIPE");
+    expectError(function() call(SYS.fs_write, writeFd, "x", 8) end, "ESPIPE");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("closing the write end ends the stream: a read returns nil rather than blocking", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    call(SYS.fs_write, writeFd, "last words");
+    call(SYS.fs_close, writeFd);
+    assert(call(SYS.fs_read, readFd, 32) == "last words", "buffered data was lost when the writer closed");
+    assert(call(SYS.fs_read, readFd, 32) == nil, "expected nil at end of stream");
+    call(SYS.fs_close, readFd);
+end)
+
+test("a pipe stays open until every copy of the write end is closed", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local copy = call(SYS.io_dup, writeFd);
+
+    call(SYS.fs_write, copy, "one");
+    call(SYS.fs_close, writeFd);
+    assert(call(SYS.fs_read, readFd, 16) == "one", "the dup'd write end did not reach the pipe");
+
+    call(SYS.fs_write, copy, "two");
+    assert(call(SYS.fs_read, readFd, 16) == "two", "the pipe closed while a dup of the write end was still open");
+
+    call(SYS.fs_close, copy);
+    assert(call(SYS.fs_read, readFd, 16) == nil, "expected end of stream once the last write end went away");
+    call(SYS.fs_close, readFd);
+end)
+
+test("a read on an empty pipe parks until somebody writes", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local tid, result = runInThread(function(result)
+        local t0 = call(SYS.sys_epoch, "utc");
+        result.data = call(SYS.fs_read, readFd, 64);
+        result.elapsed = call(SYS.sys_epoch, "utc") - t0;
+    end);
+    sleep(0.15); -- let the reader park before anything is there to read
+    call(SYS.fs_write, writeFd, "late");
+    call(SYS.thread_join, tid);
+    assert(result.ok, "reader thread failed: " .. tostring(result.err));
+    assert(result.data == "late", "parked reader got " .. tostring(result.data));
+    assert(result.elapsed >= 100,
+        "the read returned immediately instead of parking, after " .. tostring(result.elapsed) .. "ms");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("closing the write end wakes a parked reader with end of stream", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local tid, result = runInThread(function(result)
+        result.data = call(SYS.fs_read, readFd, 64);
+        result.sawEof = result.data == nil;
+    end);
+    sleep(0.05);
+    call(SYS.fs_close, writeFd);
+    call(SYS.thread_join, tid);
+    assert(result.ok, "reader thread failed: " .. tostring(result.err));
+    assert(result.sawEof, "parked reader was woken with " .. tostring(result.data) .. " instead of end of stream");
+    call(SYS.fs_close, readFd);
+end)
+
+test("a write past the buffer capacity parks the writer until a reader drains it", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local payload = string.rep("x", 5000);
+
+    local tid, result = runInThread(function(result)
+        result.written = call(SYS.fs_write, writeFd, payload);
+    end);
+    sleep(0.05); -- the writer parks once the buffer is full
+
+    local first = call(SYS.fs_read, readFd, 5000);
+    assert(#first == 4096, "expected the buffer to cap at 4096 bytes, read " .. tostring(#first));
+
+    local rest = call(SYS.fs_read, readFd, 5000);
+    call(SYS.thread_join, tid);
+
+    assert(result.ok, "writer thread failed: " .. tostring(result.err));
+    assert(#first + #rest == 5000, "the pipe lost bytes: " .. tostring(#first + #rest) .. " of 5000");
+    assert(result.written == 5000, "the parked write reported " .. tostring(result.written) .. " bytes");
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+end)
+
+test("closing the read end under a parked writer ends the write with what it placed", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+    local tid, result = runInThread(function(result)
+        result.written = call(SYS.fs_write, writeFd, string.rep("y", 5000));
+    end);
+    sleep(0.05);
+    call(SYS.fs_close, readFd);
+    call(SYS.thread_join, tid);
+    assert(result.ok, "writer thread failed: " .. tostring(result.err));
+    assert(result.written == 4096,
+        "expected the partial count the writer managed to place, got " .. tostring(result.written));
+    call(SYS.fs_close, writeFd);
+end)
+
+-- Same gating trick as spawnGatedSender: the child parks on fd 4 until we have closed
+-- our own ends, since spawn queues the child ahead of the parent's own resume.
+local function spawnGatedPipeWriter(src)
+    local readFd, writeFd = call(SYS.io_pipe);
+    local gate = call(SYS.ipc_create);
+    local gateSend = call(SYS.io_dup, gate);
+
+    local pid = spawnChild(body({
+        CREATE = SYS.ipc_create, RECEIVE = SYS.ipc_receive,
+        SIGNAL = SYS.sys_signal, WRITE = SYS.fs_write,
+    }, "call(RECEIVE, 4)\n" .. src), {
+        fds = { [3] = writeFd, [4] = { fd = gate, op = "MOVE" } },
+    });
+
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_close, writeFd);
+    call(SYS.ipc_send, gateSend, { go = true });
+    call(SYS.ipc_close, gateSend);
+
+    return pid;
+end
+
+test("writing to a pipe with no reader left raises SIGPIPE, terminating by default", function()
+    local pid = spawnGatedPipeWriter([[
+        call(WRITE, 3, "into the void")
+    ]]);
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 141, "expected exit 141 (128 + SIGPIPE), got " .. tostring(r.code));
+end)
+
+test("a registered SIGPIPE handler turns the broken pipe write into EPIPE instead of death", function()
+    local pid = spawnGatedPipeWriter([[
+        local sigPort = call(CREATE)
+        call(SIGNAL, 13, sigPort)
+
+        local ok, err = pcall(call, WRITE, 3, "into the void")
+        assert(not ok, "expected the write to fail")
+        assert(tostring(err):find("EPIPE"), "expected EPIPE, got: " .. tostring(err))
+
+        local msg = call(RECEIVE, sigPort)
+        assert(msg.data.signal == 13, "expected signal 13, got " .. tostring(msg.data.signal))
+        assert(msg.data.data.fd == 3, "expected the written fd in the payload, got " .. tostring(msg.data.data.fd))
+    ]]);
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "child exited " .. tostring(r.code) .. " instead of handling SIGPIPE");
+end)
+
+test("a child inherits a pipe as fd 1, and its print arrives on the parent's read end", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+
+    local pid = spawnChild([[
+        print("hello from the child")
+    ]], { fds = { [1] = writeFd } });
+
+    -- the parent's own copy has to go, or the read end never sees the child's exit
+    call(SYS.fs_close, writeFd);
+
+    local got = "";
+    while true do
+        local chunk = call(SYS.fs_read, readFd, 256);
+        if not chunk then break; end
+        got = got .. chunk;
+    end
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "child exited " .. tostring(r.code));
+    assert(got == "hello from the child\n", "parent read " .. string.format("%q", got));
+    call(SYS.fs_close, readFd);
+end)
+
+test("a child inherits a pipe as fd 0 and reads what the parent writes into it", function()
+    local readFd, writeFd = call(SYS.io_pipe);
+
+    local pid = spawnChild([[
+        local line = read(32)
+        assert(line == "ping", "child read " .. tostring(line))
+    ]], { fds = { [0] = readFd } });
+
+    call(SYS.fs_close, readFd);
+    call(SYS.fs_write, writeFd, "ping");
+
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "child exited " .. tostring(r.code) .. " instead of reading its stdin");
+    call(SYS.fs_close, writeFd);
 end)
 
 --============================================================--

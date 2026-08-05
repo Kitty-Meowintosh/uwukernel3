@@ -132,6 +132,8 @@ function HAL.shutdown()
     if HAL.backend == "cc" then
         os.shutdown();
     elseif HAL.backend == "neet" then
+        screen.fill(0, 0, 0);
+        screen.draw();
         chip.shutdown();
     end
 end

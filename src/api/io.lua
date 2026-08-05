@@ -1,7 +1,13 @@
 local ProcessRegistry = require("proc.registry.ProcessRegistry");
 local ObjectManager = require("core.ObjectManager");
+local Pipe = require("vfs.classes.Pipe");
 
 local io = {};
+
+function io.pipe(tcb)
+    local pcb = ProcessRegistry.get(tcb.pid);
+    return Pipe.create(pcb);
+end
 
 function io.dup(tcb, oldFd, newFd)
     assert(type(oldFd) == "number", "EINVAL: Old FD must be a number");
@@ -13,6 +19,6 @@ function io.dup(tcb, oldFd, newFd)
 end
 
 return {
-    -- 73 is documented as io.pipe() but was never implemented in UwUKernel2 either; left out until it is.
+    [73] = io.pipe,
     [74] = io.dup,
 };

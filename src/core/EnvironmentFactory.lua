@@ -2,18 +2,50 @@
 local EnvironmentFactory = {};
 local Utils = require("misc.Utils");
 
-function EnvironmentFactory.getEnvironment(pid, args)
+local DEFAULT_LUA_PATH = "/Library/?.lua;/Library/?/init.lua";
+
+local function makePackage(pcb)
+    return setmetatable({
+        preload = {},
+        loaded = {},
+    }, {
+        __metatable = "locked",
+
+        __index = function(_, key)
+            if (key == "path") then
+                return pcb.env.LUA_PATH or DEFAULT_LUA_PATH;
+            end
+        end,
+
+        __newindex = function(self, key, value)
+            if (key ~= "path") then
+                rawset(self, key, value);
+                return;
+            end
+
+            if (value == nil) then
+                pcb.env.LUA_PATH = nil;
+                return;
+            end
+
+            if (type(value) ~= "string") then
+                error("EINVAL: package.path must be a string.");
+            end
+
+            pcb.env.LUA_PATH = value;
+        end,
+    });
+end
+
+---@param pcb Process process the sandbox belongs to.
+---@param args string[]|nil command-line arguments.
+function EnvironmentFactory.getEnvironment(pcb, args)
     ---@type table
     local env;
     env = {
         arg = args or {},
 
-        package = {
-            preload = {},
-            loaded = {},
-            -- TODO: Put path here
-            path = "/Library/?.lua;/Library/?/init.lua",
-        },
+        package = makePackage(pcb),
 
         -- calling syscalls
         call = function(id, ...)

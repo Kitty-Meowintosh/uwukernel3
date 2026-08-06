@@ -7,6 +7,15 @@ local QUANTUM_TIME = 0.05;
 local QUANTUM_INSTRUCTIONS = 10000;
 local deadline = 0;
 
+local SYS_EXIT = 1;
+local SYS_WRITE = 67;
+local STDERR = 2;
+
+local function reporter(text)
+    coroutine.yield("SYSCALL", SYS_WRITE, table.pack(STDERR, text));
+    coroutine.yield("SYSCALL", SYS_EXIT, table.pack(1));
+end
+
 local function hook()
     if (HAL.now() > deadline) then
         coroutine.yield("PREEMPT");
@@ -110,21 +119,29 @@ function Scheduler.run()
                 -- handle traps
                 if (not ok) then
                     -- crash
-                    -- TODO: Remove this, write to stderr or smth
-                    local rawTrace = debug.traceback(tcb.co);
-                    local cleanTrace = rawTrace;
+                    local trace = debug.traceback(tcb.co);
+                    local prefix = pcb.name .. "(" .. pcb.pid .. ":" .. tcb.tid .. ")";
+                    local summary = prefix .. " [ERROR] " .. tostring(trap):gsub("^.-:%d+: ", "");
 
                     if HAL.backend == "cc" then term.setTextColor(16384) end -- red
-                    local procPrefix = pcb.name .. "(" .. pcb.pid .. ":" .. tcb.tid .. ")";
-                    local totalLog = procPrefix .. " [ERROR] " .. tostring(trap):gsub("^.-:%d+: ", "")
-                    HAL.print(totalLog);
-                    HAL.print(cleanTrace);
-                    HAL.appendLog(totalLog);
-                    HAL.appendLog(cleanTrace);
+                    HAL.appendLog(summary);
+                    HAL.appendLog(trace);
                     if HAL.backend == "cc" then term.setTextColor(1) end
 
                     local ProcessManager = require("proc.ProcessManager");
-                    ProcessManager.exit(tcb.pid, 1);
+                    local doomed = pcb.threads;
+                    pcb.threads = {};
+
+                    for _, doomedTid in ipairs(doomed) do
+                        ThreadManager.terminate(doomedTid);
+                    end
+
+                    if (pcb.reporting or not pcb.handles[STDERR]) then
+                        ProcessManager.exit(tcb.pid, 1);
+                    else
+                        pcb.reporting = true;
+                        ThreadManager.create(tcb.pid, reporter, { summary .. "\n" .. trace .. "\n" });
+                    end
                 elseif (coroutine.status(tcb.co) == "dead") then
                     -- adequate exit
                     local results = { trap, returns[1] }

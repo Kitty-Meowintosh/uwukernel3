@@ -39,6 +39,20 @@ function ProcessRegistry.getAll()
     return result;
 end
 
+---@param pgid number pgid to collect members of
+---@return number[] pids
+function ProcessRegistry.getByPgid(pgid)
+    local result = {};
+    for pid, process in pairs(processList) do
+        if (process.pgid == pgid) then
+            table.insert(result, pid);
+        end
+    end
+
+    table.sort(result);
+    return result;
+end
+
 ---Remove process from a registry
 ---@param pid number
 function ProcessRegistry.remove(pid)

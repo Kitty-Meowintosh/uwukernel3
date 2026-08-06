@@ -37,6 +37,7 @@
 local SYS = {
     proc_spawn = 0, proc_exit = 1, proc_wait = 2, proc_kill = 3, proc_info = 4,
     proc_setattr = 5, proc_limit = 6, proc_list = 8,
+    proc_getenv = 13, proc_setenv = 14,
 
     thread_create = 9, thread_join = 10, thread_id = 11, thread_list = 12,
 
@@ -139,7 +140,7 @@ end
 log("=== UwUKernel3 syscall suite starting ===");
 
 --============================================================--
--- proc.* (0-8)
+-- proc.* (0-8, 13-14)
 --============================================================--
 
 test("proc.info(nil) describes the calling process", function()
@@ -365,6 +366,157 @@ end)
 test("removed proc.yield(7) -> ENOSYS", function()
     expectError(function() call(7) end, "ENOSYS");
 end)
+
+local DEFAULT_LUA_PATH = "/Library/?.lua;/Library/?/init.lua";
+
+test("proc.setenv / proc.getenv round-trip a value", function()
+    call(SYS.proc_setenv, "MEOW_ROUNDTRIP", "purr");
+    assert(call(SYS.proc_getenv, "MEOW_ROUNDTRIP") == "purr",
+        "got " .. tostring(call(SYS.proc_getenv, "MEOW_ROUNDTRIP")));
+    call(SYS.proc_setenv, "MEOW_ROUNDTRIP", nil);
+end)
+
+test("proc.getenv of an unset name returns nil", function()
+    assert(call(SYS.proc_getenv, "MEOW_DEFINITELY_UNSET") == nil, "expected nil for an unset name");
+end)
+
+test("proc.setenv with a nil value unsets", function()
+    call(SYS.proc_setenv, "MEOW_UNSET_ME", "here");
+    call(SYS.proc_setenv, "MEOW_UNSET_ME", nil);
+    assert(call(SYS.proc_getenv, "MEOW_UNSET_ME") == nil, "variable survived being unset");
+end)
+
+test("proc.getenv() with no name returns the whole map", function()
+    call(SYS.proc_setenv, "MEOW_MAP_A", "1");
+    call(SYS.proc_setenv, "MEOW_MAP_B", "2");
+
+    local map = call(SYS.proc_getenv);
+    assert(type(map) == "table", "expected a table, got " .. type(map));
+    assert(map.MEOW_MAP_A == "1" and map.MEOW_MAP_B == "2", "map is missing variables that are set");
+
+    call(SYS.proc_setenv, "MEOW_MAP_A", nil);
+    call(SYS.proc_setenv, "MEOW_MAP_B", nil);
+end)
+
+test("proc.getenv() returns a copy, so mutating it cannot reach the process", function()
+    local map = call(SYS.proc_getenv);
+    map.MEOW_SMUGGLED = "nope";
+    assert(call(SYS.proc_getenv, "MEOW_SMUGGLED") == nil, "writing the returned map changed the environment");
+end)
+
+test("proc.setenv rejects malformed names and non-string values", function()
+    expectError(function() call(SYS.proc_setenv, 5, "x") end, "EINVAL");
+    expectError(function() call(SYS.proc_setenv, "", "x") end, "EINVAL");
+    expectError(function() call(SYS.proc_setenv, "MEOW=BAD", "x") end, "EINVAL");
+    expectError(function() call(SYS.proc_setenv, "MEOW_BAD_VALUE", 5) end, "EINVAL");
+end)
+
+test("proc.getenv rejects a malformed name", function()
+    expectError(function() call(SYS.proc_getenv, "MEOW=BAD") end, "EINVAL");
+end)
+
+test("a child with no attributes.env inherits the parent's environment", function()
+    call(SYS.proc_setenv, "MEOW_INHERITED", "yes");
+
+    local pid = spawnChild(body({ GETENV = SYS.proc_getenv }, [[
+        assert(call(GETENV, "MEOW_INHERITED") == "yes",
+            "child did not inherit, got " .. tostring(call(GETENV, "MEOW_INHERITED")))
+    ]]));
+    local r = call(SYS.proc_wait, pid);
+
+    call(SYS.proc_setenv, "MEOW_INHERITED", nil);
+    assert(r.code == 0, "child did not see the inherited environment");
+end)
+
+test("attributes.env replaces the environment rather than merging into it", function()
+    call(SYS.proc_setenv, "MEOW_SHOULD_NOT_LEAK", "leaked");
+
+    local pid = spawnChild(body({ GETENV = SYS.proc_getenv }, [[
+        assert(call(GETENV, "MEOW_OWN") == "mine", "child is missing its own environment")
+        assert(call(GETENV, "MEOW_SHOULD_NOT_LEAK") == nil, "parent's environment leaked into a replaced one")
+    ]]), { env = { MEOW_OWN = "mine" } });
+    local r = call(SYS.proc_wait, pid);
+
+    call(SYS.proc_setenv, "MEOW_SHOULD_NOT_LEAK", nil);
+    assert(r.code == 0, "attributes.env did not replace the environment");
+end)
+
+test("a child's setenv does not leak back into the parent", function()
+    local pid = spawnChild(body({ SETENV = SYS.proc_setenv }, [[
+        call(SETENV, "MEOW_CHILD_ONLY", "x")
+    ]]));
+    local r = call(SYS.proc_wait, pid);
+
+    assert(r.code == 0, "child failed to set its own variable");
+    assert(call(SYS.proc_getenv, "MEOW_CHILD_ONLY") == nil, "the child's environment is shared with the parent");
+end)
+
+test("proc.spawn validates attributes.env", function()
+    expectError(function()
+        call(SYS.proc_spawn, "badenv", nil, { blob = "call(1, 0);", env = { MEOW = 5 } });
+    end, "EINVAL");
+
+    expectError(function()
+        call(SYS.proc_spawn, "badenv", nil, { blob = "call(1, 0);", env = { ["MEOW=BAD"] = "x" } });
+    end, "EINVAL");
+end)
+
+test("proc.spawn attr.cwd sets the child's working directory", function()
+    local pid = spawnChild(body({ INFO = SYS.proc_info }, [[
+        local cwd = call(INFO).cwd
+        assert(cwd == "/Library", "expected /Library, got " .. tostring(cwd))
+    ]]), { cwd = "/Library" });
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "attr.cwd was ignored");
+end)
+
+test("a child with no attr.cwd inherits the parent's", function()
+    local mine = call(SYS.proc_info).cwd;
+    assert(type(mine) == "string", "proc.info does not report cwd");
+
+    local pid = spawnChild(body({ INFO = SYS.proc_info }, [[
+        local cwd = call(INFO).cwd
+        assert(cwd == "]] .. mine .. [[", "expected ]] .. mine .. [[, got " .. tostring(cwd))
+    ]]));
+    local r = call(SYS.proc_wait, pid);
+    assert(r.code == 0, "child did not inherit the parent's cwd");
+end)
+
+test("package.path reads LUA_PATH, and falls back when it is unset", function()
+    local saved = call(SYS.proc_getenv, "LUA_PATH");
+
+    call(SYS.proc_setenv, "LUA_PATH", nil);
+    assert(package.path == DEFAULT_LUA_PATH, "expected the default path, got " .. tostring(package.path));
+
+    call(SYS.proc_setenv, "LUA_PATH", "/meow/?.lua");
+    assert(package.path == "/meow/?.lua", "package.path did not follow LUA_PATH, got " .. tostring(package.path));
+
+    call(SYS.proc_setenv, "LUA_PATH", saved);
+end)
+
+test("writing package.path writes LUA_PATH", function()
+    local saved = call(SYS.proc_getenv, "LUA_PATH");
+
+    package.path = "/meow/?.lua;" .. package.path;
+    assert(call(SYS.proc_getenv, "LUA_PATH") == package.path,
+        "LUA_PATH does not match package.path after a write");
+    assert(package.path:sub(1, 12) == "/meow/?.lua;", "the prepend did not survive the round-trip");
+
+    call(SYS.proc_setenv, "LUA_PATH", saved);
+end)
+
+test("package.preload and package.loaded are still ordinary fields", function()
+    package.preload["meow.probe"] = function() return "loaded" end;
+    assert(require("meow.probe") == "loaded", "preload stopped working");
+    assert(package.loaded["meow.probe"] == "loaded", "loaded was not recorded");
+
+    package.preload["meow.probe"] = nil;
+    package.loaded["meow.probe"] = nil;
+end)
+
+expectChildExit("a child spawned with LUA_PATH starts with that package.path", [[
+    assert(package.path == "/meow/child/?.lua", "got " .. tostring(package.path))
+]], { env = { LUA_PATH = "/meow/child/?.lua" } })
 
 --============================================================--
 -- thread.* (9-12)

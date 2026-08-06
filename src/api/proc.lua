@@ -26,9 +26,9 @@ function proc.exit(tcb, code)
     ProcessManager.exit(tcb.pid, code);
 end
 
----Blocks until child process exits.
+---Blocks until a matching child process exits.
 ---@param tcb number Thread calling the syscall.
----@param pid number Pid of a child to wait for, -1 for any.
+---@param pid number Child pid, -1 for any, 0 for the caller's group, <-1 for group (-pid).
 ---@param opts table Table of options.
 function proc.wait(tcb, pid, opts)
     assert(type(pid) == "number", "EINVAL: Bad argument #1: Pid must be a valid number.");
@@ -38,17 +38,29 @@ function proc.wait(tcb, pid, opts)
     return ProcessManager.wait(caller, pid, opts);
 end
 
----Sends a control signal to the process.
+---Sends a control signal to a process or a process group.
+---POSIX pid conventions: >0 that process, 0 the caller's own group, -1 every
+---process the caller may signal, <-1 the process group (-pid).
 ---@param tcb Thread Thread calling the syscall.
----@param pid number Process to send signal to.
+---@param pid number Process, or negated process group, to signal.
 ---@param signal string Desired signal to be sent.
+---@return number delivered Number of processes the signal reached.
 function proc.kill(tcb, pid, signal)
     assert(type(pid) == "number", "EINVAL: Bad argument #1: Pid must be a valid number.");
     assert(type(signal) == "number", "EINVAL: Bad argument #2: Signal ID must be a number.");
     local pcb = ProcessRegistry.get(tcb.pid);
 
     -- TODO: Add payload?
-    return SignalManager.send(pcb, pid, signal, {});
+    if (pid > 0) then
+        SignalManager.send(pcb, pid, signal, {});
+        return 1;
+    elseif (pid == 0) then
+        return SignalManager.sendToGroup(pcb, pcb.pgid, signal, {});
+    elseif (pid == -1) then
+        return SignalManager.broadcast(pcb, signal, {});
+    end
+
+    return SignalManager.sendToGroup(pcb, -pid, signal, {});
 end
 
 ---Returns metadata of process.
@@ -65,9 +77,12 @@ function proc.info(tcb, pid)
     return {
         pid = pid,
         ppid = process.ppid,
+        pgid = process.pgid,
+        sid = process.sid,
         uid = process.uid,
         gid = process.gid,
         state = process.state,
+        cwd = process.cwd,
         groups = Utils.deepcopy(process.groups),
         name = process.name,
         cpuTime = process.cpuTime,
@@ -78,7 +93,8 @@ end
 
 ---Changes attributes of running process.
 ---@param tcb Thread Thread calling the syscall.
----@param attr table Attributes to set (uid, gid, groups, cwd).
+---@param attr table Attributes to set (uid, gid, groups, cwd, pgid, session).
+---@return table ids `pgid` and `sid` after the change.
 function proc.setattr(tcb, attr)
     local process = ProcessRegistry.get(tcb.pid);
     local isRoot = process.uid == 0;
@@ -112,6 +128,52 @@ function proc.setattr(tcb, attr)
     if (attr.cwd) then
         process.cwd = attr.cwd;
     end
+
+    if (attr.session and attr.pgid) then
+        error("EINVAL: session and pgid cannot be set together.");
+    end
+
+    if (attr.session) then
+        -- A group is named only by its leader's pid, so a leader walking into a
+        -- new session would leave its members pointing at a pgid that now names
+        -- a group in a different one.
+        if (process.pgid == process.pid) then
+            error("EPERM: A process group leader cannot start a new session.");
+        end
+
+        process.sid = process.pid;
+        process.pgid = process.pid;
+    end
+
+    if (attr.pgid) then
+        if (type(attr.pgid) ~= "number")
+                or (attr.pgid < 0)
+                or (attr.pgid ~= math.floor(attr.pgid))
+        then
+            error("EINVAL: pgid must be a non-negative integer.");
+        end
+
+        if (process.sid == process.pid) then
+            error("EPERM: A session leader cannot change process group.");
+        end
+
+        local targetPgid = (attr.pgid == 0) and process.pid or attr.pgid;
+
+        if (targetPgid ~= process.pid) then
+            local groupSid = ProcessManager.sessionOfGroup(targetPgid);
+            if (not groupSid) then
+                error("EPERM: Process group " .. targetPgid .. " does not exist.");
+            end
+
+            if (groupSid ~= process.sid) then
+                error("EPERM: Process group " .. targetPgid .. " is in another session.");
+            end
+        end
+
+        process.pgid = targetPgid;
+    end
+
+    return { pgid = process.pgid, sid = process.sid };
 end
 
 ---Sets strict limits for calling process (inherited by children).
@@ -146,6 +208,36 @@ function proc.list(tcb)
     return ProcessRegistry.getAll();
 end
 
+---Reads the calling process's environment.
+---@param tcb Thread Thread calling the syscall.
+---@param name string|nil Variable to read (nil for a copy of the whole map).
+---@return string|table<string, string>|nil value
+function proc.getenv(tcb, name)
+    local process = ProcessRegistry.get(tcb.pid);
+
+    if (name == nil) then
+        return Utils.deepcopy(process.env);
+    end
+
+    Utils.checkEnvName(name);
+    return process.env[name];
+end
+
+---Sets or unsets a variable in the calling process's environment.
+---Children inherit the result; existing children are unaffected.
+---@param tcb Thread Thread calling the syscall.
+---@param name string Variable to write.
+---@param value string|nil New value, nil to unset.
+function proc.setenv(tcb, name, value)
+    Utils.checkEnvName(name);
+    if (value ~= nil and type(value) ~= "string") then
+        error("EINVAL: Bad argument #2: Value must be a string or nil.");
+    end
+
+    local process = ProcessRegistry.get(tcb.pid);
+    process.env[name] = value;
+end
+
 return {
     [0] = proc.spawn,
     [1] = proc.exit,
@@ -156,4 +248,6 @@ return {
     [6] = proc.limit,
     -- 7 was proc.yield, and it was removed, as coroutine.yield() can be used instead, and it was actually dangerous.
     [8] = proc.list,
+    [13] = proc.getenv,
+    [14] = proc.setenv,
 }

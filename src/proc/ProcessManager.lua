@@ -25,6 +25,47 @@ local function createKernelProcess()
     ProcessRegistry.register(0, kernelProcess);
 end
 
+---Which session a process group belongs to, or nil when the group has no members.
+---@param pgid number group to look up.
+---@return number|nil sid
+function ProcessManager.sessionOfGroup(pgid)
+    local members = ProcessRegistry.getByPgid(pgid);
+    for _, pid in ipairs(members) do
+        local member = ProcessRegistry.get(pid);
+        if (member) then return member.sid end;
+    end
+
+    return nil;
+end
+
+---Undo a registration when spawn fails after the child was already linked to its
+---parent.
+local function unregisterChild(parent, pid)
+    ProcessRegistry.remove(pid);
+
+    for i, childPid in ipairs(parent.children) do
+        if (childPid == pid) then
+            table.remove(parent.children, i);
+            break;
+        end
+    end
+end
+
+---POSIX wait() target matching.
+---@param target number >0 that child, -1 any child, 0 the caller's group, <-1 group (-target).
+---@param childPcb Process candidate child.
+---@param callerPcb Process process doing the waiting.
+---@return boolean
+local function waitMatches(target, childPcb, callerPcb)
+    if (target == -1) then return true end;
+    if (target > 0) then return childPcb.pid == target end;
+    if (target == 0) then return childPcb.pgid == callerPcb.pgid end;
+
+    return childPcb.pgid == -target;
+end
+
+ProcessManager.waitMatches = waitMatches;
+
 ---Spawn a new process.
 ---@param ppid number parent pid.
 ---@param path string debug name of the executable (loading is done by the caller; see attr.blob).
@@ -37,32 +78,76 @@ function ProcessManager.spawn(ppid, path, args, attr)
     local parent = ProcessRegistry.get(attr.parent or ppid);
     if (not parent) then error("ESRSH: Invalid parent.") end;
 
-    local currentUid = parent and parent.uid or 0
-    if (attr.uid and attr.uid ~= currentUid and currentUid ~= 0) then
+    local caller = ProcessRegistry.get(ppid) or parent;
+    local callerUid = caller.uid;
+
+    local currentUid = parent.uid;
+    if (attr.uid and attr.uid ~= currentUid and callerUid ~= 0) then
         error("EPERM: No permission.");
     end
 
-    local currentGid = parent and parent.gid or 0
-    if (attr.gid and attr.gid ~= currentGid and currentUid ~= 0) then
+    local currentGid = parent.gid;
+    if (attr.gid and attr.gid ~= currentGid and callerUid ~= 0) then
         error("EPERM: No permission.");
     end
 
-    local currentGroups = parent and parent.groups or {}
-    if (attr.groups and attr.groups ~= currentGroups and currentUid ~= 0) then
+    local currentGroups = parent.groups;
+    if (attr.groups and attr.groups ~= currentGroups and callerUid ~= 0) then
         error("EPERM: No permission.");
     end
 
-    if (attr.parent and currentUid ~= 0) then
+    if (attr.parent and callerUid ~= 0) then
         error("EPERM: No permission.");
     end
 
     -- TODO: Replace with more sophisticated check!
-    if (attr.limits and currentUid ~= 0) then
+    if (attr.limits and callerUid ~= 0) then
         error("EPERM: No permission.");
+    end
+
+    if (attr.pgid ~= nil) then
+        if (attr.session) then
+            error("EINVAL: attr.session and attr.pgid cannot be set together.");
+        end
+
+        if (type(attr.pgid) ~= "number")
+                or (attr.pgid < 0)
+                or (attr.pgid ~= math.floor(attr.pgid))
+        then
+            error("EINVAL: attr.pgid must be a non-negative integer.");
+        end
     end
 
     -- Create new PCB.
     local newPid = ProcessRegistry.getNextPid();
+
+    local targetSid, targetPgid;
+    if (parent.pid == 0) or (attr.session) then
+        targetSid = newPid;
+        targetPgid = newPid;
+    else
+        targetSid = parent.sid;
+        targetPgid = parent.pgid;
+    end
+
+    if (attr.pgid) then
+        if (attr.pgid == 0) or (attr.pgid == newPid) then
+            targetPgid = newPid;
+        else
+            local groupSid = ProcessManager.sessionOfGroup(attr.pgid);
+            if (not groupSid) then
+                error("EPERM: Process group " .. attr.pgid .. " does not exist.");
+            end
+
+            if (groupSid ~= caller.sid) then
+                error("EPERM: Process group " .. attr.pgid .. " is in another session.");
+            end
+
+            targetPgid = attr.pgid;
+            targetSid = groupSid;
+        end
+    end
+
     local targetUid = attr.uid or currentUid;
     local targetGid = attr.gid or (parent and parent.gid or 0);
     local targetGroups = attr.groups or (parent and parent.groups or {});
@@ -73,8 +158,19 @@ function ProcessManager.spawn(ppid, path, args, attr)
             targetUid, targetGid
     );
 
+    -- Inherit session and process group.
+    child.sid = targetSid;
+    child.pgid = targetPgid;
+
     -- Inherit working directory and environment.
-    child.cwd = parent and parent.cwd or "/";
+    child.cwd = attr.cwd or (parent and parent.cwd or "/");
+
+    if (attr.env) then
+        Utils.checkEnvMap(attr.env);
+        child.env = Utils.deepcopy(attr.env);
+    else
+        child.env = Utils.deepcopy(parent and parent.env or {});
+    end
 
     -- Inherit limits and groups
     child.groups = targetGroups;
@@ -83,8 +179,6 @@ function ProcessManager.spawn(ppid, path, args, attr)
     elseif (attr.limits) then
         child.limits = Utils.deepcopy(attr.limits);
     end
-
-    -- TODO: Copy environment.
 
     -- File descriptor inheritance / passing.
     if (parent and attr.fds) then
@@ -114,7 +208,7 @@ function ProcessManager.spawn(ppid, path, args, attr)
     if (parent) then parent.children[#parent.children + 1] = newPid end;
 
     -- get environment.
-    local processEnv = EnvironmentFactory.getEnvironment(newPid, args);
+    local processEnv = EnvironmentFactory.getEnvironment(child, args);
 
     -- inject preload
     if (attr.preload) then
@@ -128,8 +222,6 @@ function ProcessManager.spawn(ppid, path, args, attr)
                     return chunk(modname);
                 end
             elseif type(data) == "function" then
-                -- Lua 5.2+ has no setfenv: an already-compiled function's _ENV
-                -- can't be forced after the fact, so this is trusted as-is.
                 processEnv.package.preload[name] = function(modname)
                     return data(modname);
                 end
@@ -139,19 +231,19 @@ function ProcessManager.spawn(ppid, path, args, attr)
         end
     end
 
-    child.env = processEnv;
+    child.globals = processEnv;
 
     -- get source: kernel no longer loads from disk, callers must pass a blob.
     local blob = attr.blob;
     if (not blob) then
-        ProcessRegistry.remove(newPid);
+        unregisterChild(parent, newPid);
         error("EINVAL: attr.blob is required (path-based loading now lives in userspace).");
     end
 
     -- load source
-    local chunk, syntaxErr = load(blob, "@" .. path, "t", child.env);
+    local chunk, syntaxErr = load(blob, "@" .. path, "t", child.globals);
     if (not chunk) then
-        ProcessRegistry.remove(newPid);
+        unregisterChild(parent, newPid);
         error("ENOEXEC: Syntax error: " .. tostring(syntaxErr));
     end
 
@@ -168,6 +260,8 @@ end
 function ProcessManager.exit(pid, exitCode)
     local pcb = ProcessRegistry.get(pid);
     if (not pcb) then error("ESRSH: Process not found.") end;
+
+    if (pcb.state == "ZOMBIE") then return end;
 
     -- Terminate threads.
     local threadsToKill = pcb.threads
@@ -207,62 +301,81 @@ function ProcessManager.exit(pid, exitCode)
         local SignalManager = require("proc.SignalManager");
         local Signal = require("proc.classes.Signal");
 
-        SignalManager.send(ProcessRegistry.get(0), parent.pid, Signal.SIGCHLD, {
+        -- A signal port handler on the parent side must not take the reaping
+        -- path down with it.
+        pcall(SignalManager.send, ProcessRegistry.get(0), parent.pid, Signal.SIGCHLD, {
             pid = pid,
             code = exitCode,
         });
 
-        for i = #parent.threadsWaitingForChildren, 1, -1 do
-            local waiter = table.remove(parent.threadsWaitingForChildren, i);
+        if (parent.state ~= "ALIVE") then return end;
 
-            if (waiter.target ~= -1 and waiter.target ~= pid) then
-                return;
-            end
+        -- Wake the oldest waiter whose target matches and leave every other one
+        -- parked: they are waiting for a different child.
+        for i = 1, #parent.threadsWaitingForChildren do
+            local waiter = parent.threadsWaitingForChildren[i];
 
-            local result = {
-                pid = pcb.pid,
-                code = pcb.exitCode,
-                usage = pcb.cpuTime or 0
-            };
+            if (waitMatches(waiter.target, pcb, parent)) then
+                table.remove(parent.threadsWaitingForChildren, i);
 
-            -- wake waiter
-            Scheduler.wake(waiter.tid, { true, { result } });
+                local result = {
+                    pid = pcb.pid,
+                    code = pcb.exitCode,
+                    usage = pcb.cpuTime or 0
+                };
 
-            -- reap process
-            ProcessRegistry.remove(pid);
+                -- wake waiter
+                Scheduler.wake(waiter.tid, { true, { result } });
 
-            -- remove from list of children
-            for j, childPid in ipairs(parent.children) do
-                if childPid == pid then
-                    table.remove(parent.children, j)
-                    break
+                -- reap process
+                ProcessRegistry.remove(pid);
+
+                -- remove from list of children
+                for j, childPid in ipairs(parent.children) do
+                    if childPid == pid then
+                        table.remove(parent.children, j)
+                        break
+                    end
                 end
-            end
 
-            return;
+                break;
+            end
         end
     end
 end
 
----Wait until child process exits.
+---Wait until a matching child exits.
 ---@param pcb Process process that is supposed to wait.
----@param targetPid number pid of a child to wait for, -1 for any.
+---@param targetPid number child pid, -1 for any, 0 for the caller's group, <-1 for group (-targetPid).
 ---@param opts table table of options.
 function ProcessManager.wait(pcb, targetPid, opts)
     opts = opts or {};
 
-    if (#pcb.children == 0) then
-        error("ECHILD: No child processes."); -- <-- it fails here actually
+    if (type(targetPid) ~= "number") or (targetPid ~= math.floor(targetPid)) then
+        error("EINVAL: Bad argument #1: Pid must be an integer.");
     end
 
-    -- Search for a zombie process among children.
+    -- Drop children whose PCB is already gone, so a stale entry cannot look like
+    -- something worth blocking on.
+    for i = #pcb.children, 1, -1 do
+        if (not ProcessRegistry.get(pcb.children[i])) then
+            table.remove(pcb.children, i);
+        end
+    end
+
+    if (#pcb.children == 0) then
+        error("ECHILD: No child processes.");
+    end
+
+    -- Search for a zombie process among the matching children.
     local foundMatch = false;
     for i, childPid in ipairs(pcb.children) do
-        if (targetPid == -1) or (targetPid == childPid) then
-            foundMatch = true;
-            local child = ProcessRegistry.get(childPid);
+        local child = ProcessRegistry.get(childPid);
 
-            if (child and child.state == "ZOMBIE") then
+        if (waitMatches(targetPid, child, pcb)) then
+            foundMatch = true;
+
+            if (child.state == "ZOMBIE") then
                 local result = {
                     pid = child.pid,
                     code = child.exitCode,
@@ -276,8 +389,9 @@ function ProcessManager.wait(pcb, targetPid, opts)
         end
     end
 
-    if targetPid ~= -1 and not foundMatch then
-        error("ECHILD: PID " .. targetPid .. " is not a child of this process.")
+    -- Nothing matches and nothing ever will, so blocking would block forever.
+    if (not foundMatch) then
+        error("ECHILD: No child process matches " .. targetPid .. ".");
     end
 
     local callerTid = Scheduler.getCurrentTid();

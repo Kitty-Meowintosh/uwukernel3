@@ -50,6 +50,22 @@ function MountRegistry.get(path)
     return mounts[path];
 end
 
+---Finds a mount point at `path` itself or anywhere below it.
+---@param path string prefix to search under.
+---@return string|nil path of the first mount point found.
+function MountRegistry.within(path)
+    local prefix = path;
+    if string.sub(prefix, -1) ~= "/" then
+        prefix = prefix .. "/";
+    end
+
+    for mountPath in pairs(mounts) do
+        if mountPath == path or string.sub(mountPath, 1, #prefix) == prefix then
+            return mountPath;
+        end
+    end
+end
+
 ---Unregisters mount point.
 ---@param path string path to unregister mount for.
 function MountRegistry.unregister(path)

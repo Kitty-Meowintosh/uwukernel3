@@ -239,7 +239,13 @@ function VFSManager.stat(pcb, path, opts)
             gid = pcb.egid,
             groups = pcb.groups,
         },
-    });
+    }, function(result)
+        if (type(result) == "table") and MountRegistry.get(path) then
+            result.mount = true;
+        end
+
+        return { result };
+    end);
 end
 
 ---List files in a folder.
@@ -277,6 +283,11 @@ function VFSManager.rename(pcb, path, destination)
         error("EXDEV: Cross-device link");
     end
 
+    local mount = MountRegistry.within(path) or MountRegistry.within(destination);
+    if mount then
+        error("EBUSY: Path is or contains a mount point: " .. mount);
+    end
+
     return Promise.send(srcPort, Protocol.Methods.RENAME, {
         path = srcRelative,
         destination = dstRelative,
@@ -302,6 +313,11 @@ function VFSManager.copy(pcb, path, destination)
 
     if port ~= dstPort then
         error("EXDEV: Cross-device link");
+    end
+
+    local mount = MountRegistry.within(path) or MountRegistry.within(destination);
+    if mount then
+        error("EBUSY: Path is or contains a mount point: " .. mount);
     end
 
     return Promise.send(port, Protocol.Methods.COPY, {
@@ -341,6 +357,11 @@ function VFSManager.remove(pcb, path)
     local port, relativePath = MountRegistry.resolve(path);
     if (not port) or (not relativePath) then
         error("ENOTFOUND: No mount point was resolved for this path.");
+    end
+
+    local mount = MountRegistry.within(path);
+    if mount then
+        error("EBUSY: Path is or contains a mount point: " .. mount);
     end
 
     return Promise.send(port, Protocol.Methods.REMOVE, {

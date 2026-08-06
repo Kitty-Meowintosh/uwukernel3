@@ -1,6 +1,8 @@
 ---@class Process
 ---@field pid number Unique Process ID
 ---@field ppid number Parent Process ID
+---@field pgid number Process Group ID (pid of the group leader)
+---@field sid number Session ID (pid of the session leader)
 ---@field name string Debug name (e.g. "shell")
 ---@field uid number Real User ID
 ---@field euid number Effective User ID
@@ -14,6 +16,7 @@
 ---@field handles table<number, number> Map of local file descriptors to global objects
 ---@field cwd string Current Working Directory
 ---@field env table<string, string> Environment Variables
+---@field globals table Lua sandbox (`_ENV`) every thread of this process runs in
 ---@field limits table Resource limits
 ---@field cpuTime number Accumulated CPU usage
 ---@field startTime number Timestamp of creation
@@ -32,6 +35,9 @@ function Process.new(pid, ppid, name, uid, gid)
         ppid = ppid,
         children = {},
 
+        pgid = pid,
+        sid = pid,
+
         uid = uid or 0,
         euid = uid or 0,
         gid = gid or 0,
@@ -46,6 +52,7 @@ function Process.new(pid, ppid, name, uid, gid)
         handles = {},
         cwd = "/",
         env = {},
+        globals = {},
 
         signalPorts = {},
 

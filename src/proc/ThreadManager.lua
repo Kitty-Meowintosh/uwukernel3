@@ -45,6 +45,9 @@ function ThreadManager.terminate(tid, results)
     local tcb = ThreadRegistry.get(tid)
     if not tcb then return end
 
+    local process = ProcessRegistry.get(tcb.pid);
+    local isMain = (process ~= nil) and (process.threads[1] == tid);
+
     tcb.state = "DEAD";
     tcb.results = results;
     tcb.exitTime = HAL.now();
@@ -56,7 +59,6 @@ function ThreadManager.terminate(tid, results)
             Scheduler.wake(waiterTid, wakeData);
         end
 
-        local process = ProcessRegistry.get(tcb.pid);
         for i, v in pairs(process.threads) do
             if (v == tid) then
                 table.remove(process.threads, i);
@@ -65,6 +67,12 @@ function ThreadManager.terminate(tid, results)
         end
     end
     tcb.joiningThreads = {}
+
+    if (isMain) then
+        local ProcessManager = require("proc.ProcessManager");
+
+        ProcessManager.exit(tcb.pid, tonumber(results and results[1]) or 0);
+    end
 end
 
 ---Wait until thread finishes execution.

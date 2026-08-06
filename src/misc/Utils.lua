@@ -27,6 +27,38 @@ function Utils.deepcopy(orig, copies)
     return copy;
 end
 
+--- Validates an environment variable name.
+--- @param name any candidate name
+function Utils.checkEnvName(name)
+    if (type(name) ~= "string") then
+        error("EINVAL: Environment name must be a string.");
+    end
+
+    if (name == "") then
+        error("EINVAL: Environment name must not be empty.");
+    end
+
+    if (name:find("=", 1, true) or name:find("\0", 1, true)) then
+        error("EINVAL: Environment name must not contain '=' or a null byte.");
+    end
+end
+
+--- Validates a whole environment map.
+--- @param map any candidate map
+function Utils.checkEnvMap(map)
+    if (type(map) ~= "table") then
+        error("EINVAL: Environment must be a table.");
+    end
+
+    for name, value in pairs(map) do
+        Utils.checkEnvName(name);
+
+        if (type(value) ~= "string") then
+            error("EINVAL: Environment value for '" .. name .. "' must be a string.");
+        end
+    end
+end
+
 function Utils.serialize(node, name, depth, seen)
     depth = depth or 0
     seen = seen or {}

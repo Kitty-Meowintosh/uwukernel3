@@ -2,7 +2,7 @@
 local EnvironmentFactory = {};
 local Utils = require("misc.Utils");
 
-local DEFAULT_LUA_PATH = "/Library/?.lua;/Library/?/init.lua";
+local DEFAULT_LUA_PATH = "/System/Library/Frameworks/?.lua;/System/Library/Frameworks/?/init.lua";
 
 local function makePackage(pcb)
     return setmetatable({

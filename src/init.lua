@@ -3,10 +3,10 @@ local DeviceManager = require("dev.DeviceManager");
 local ProcessManager = require("proc.ProcessManager");
 local Scheduler = require("core.Scheduler");
 
-local INIT_PATH_CC   = "/Core/launchd/init.lua";
-local INIT_PATH_NEET = "system:/Core/launchd/init.lua";
-local TEST_PATH_CC = "/Core/kernel/test.lua";
-local TEST_PATH_NEET = "system:/Core/kernel/test.lua";
+local INIT_PATH_CC   = "/System/Library/CoreServices/launchd/init.lua";
+local INIT_PATH_NEET = "system:/System/Library/CoreServices/launchd/init.lua";
+local TEST_PATH_CC = "/System/Library/Kernel/test.lua";
+local TEST_PATH_NEET = "system:/System/Library/Kernel/test.lua";
 
 local Kernel = {};
 

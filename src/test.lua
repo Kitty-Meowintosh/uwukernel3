@@ -367,7 +367,7 @@ test("removed proc.yield(7) -> ENOSYS", function()
     expectError(function() call(7) end, "ENOSYS");
 end)
 
-local DEFAULT_LUA_PATH = "/Library/?.lua;/Library/?/init.lua";
+local DEFAULT_LUA_PATH = "/System/Library/Frameworks/?.lua;/System/Library/Frameworks/?/init.lua";
 
 test("proc.setenv / proc.getenv round-trip a value", function()
     call(SYS.proc_setenv, "MEOW_ROUNDTRIP", "purr");
@@ -464,8 +464,8 @@ end)
 test("proc.spawn attr.cwd sets the child's working directory", function()
     local pid = spawnChild(body({ INFO = SYS.proc_info }, [[
         local cwd = call(INFO).cwd
-        assert(cwd == "/Library", "expected /Library, got " .. tostring(cwd))
-    ]]), { cwd = "/Library" });
+        assert(cwd == "/System/Library/Frameworks", "expected /System/Library/Frameworks, got " .. tostring(cwd))
+    ]]), { cwd = "/System/Library/Frameworks" });
     local r = call(SYS.proc_wait, pid);
     assert(r.code == 0, "attr.cwd was ignored");
 end)

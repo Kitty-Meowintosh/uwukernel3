@@ -10,7 +10,7 @@ to   = "system/startup.lua"
 
 [[install]]
 from = "src/"
-to   = "system/Core/kernel/"
+to   = "system/System/Library/Kernel/"
 exclude = [
     "startup.lua",
     "**/*.md",

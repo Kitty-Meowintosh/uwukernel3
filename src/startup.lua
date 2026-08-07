@@ -1,5 +1,5 @@
-local KERNEL_DIR_CC   = "/Core/kernel";
-local KERNEL_DIR_NEET = "0:system:/Core/kernel";
+local KERNEL_DIR_CC   = "/System/Library/Kernel";
+local KERNEL_DIR_NEET = "0:system:/System/Library/Kernel";
 
 local function detectBackend()
     if _G.chip and chip.version then
@@ -14,13 +14,11 @@ local function detectBackend()
 end
 
 local kernelDir = detectBackend() == "neet" and KERNEL_DIR_NEET or KERNEL_DIR_CC;
-local parentDir = kernelDir:gsub("/[^/]+$", "");
 
 package.path = table.concat({
     package.path,
     kernelDir .. "/?.lua",
     kernelDir .. "/?/init.lua",
-    parentDir .. "/?/init.lua",
 }, ";");
 
-require("kernel").run();
+require("init").run();

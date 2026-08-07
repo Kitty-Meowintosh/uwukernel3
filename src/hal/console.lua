@@ -1,7 +1,7 @@
 -- Minimal debug console for NEET, backing HAL.print.
 local loadFont = require("hal.font.psf");
 
-local FONT_PATH = "system:/Core/kernel/hal/font/default.psf";
+local FONT_PATH = "system:/System/Library/Kernel/hal/font/default.psf";
 
 -- Font.drawLine advances (glyphWidth + charSpacing) per character and defaults
 -- charSpacing to 1; mirrored here so the wrap width matches what is drawn.
